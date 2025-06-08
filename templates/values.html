@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Hodnoty senzora a LED</title>
+  <style>
+    body { font-family: sans-serif; background: #f9f9f9; padding: 20px; }
+    .container { max-width: 700px; margin: auto; background: white; padding: 20px; border-radius: 10px; }
+    h2 { margin-bottom: 10px; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 6px 8px; border-bottom: 1px solid #ddd; font-size: 14px; }
+    input[type=range] { width: 100%; margin-top: 10px; }
+    button { padding: 8px 14px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Hodnoty senzora a LED</h2>
+    <input type="range" min="0" max="100" id="slider" disabled>
+    <p>Jas: <span id="val">0</span>%</p>
+    <ul id="log"></ul>
+  </div>
+
+  <script>
+    let systemOpen = false;
+    let monitoringActive = false;
+
+    function updateLog() {
+      fetch('/latest_value')
+        .then(res => res.json())
+        .then(data => {
+          const time = new Date().toLocaleTimeString();
+          const log = document.getElementById('log');
+          const item = document.createElement('li');
+          item.textContent = `${time} – Senzor: ${data.sensor} | Jas: ${data.brightness}%`;
+          log.prepend(item);
+          if (log.children.length > 100) {
+            log.removeChild(log.lastChild);
+          }
+        });
+    }
+
+    setInterval(updateLog, 1000);
+
+    fetch('/status')
+      .then(res => res.json())
+      .then(data => {
+        systemOpen = data.system_open;
+        document.getElementById('slider').disabled = !systemOpen;
+      });
+
+    const slider = document.getElementById('slider');
+    const valDisplay = document.getElementById('val');
+    slider.oninput = () => {
+      valDisplay.innerText = slider.value;
+      fetch('/set_brightness', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'percent=' + slider.value
+      });
+    };
+  </script>
+</body>
+</html>
