@@ -1,10 +1,25 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Monitorovanie svetla</title>
+  <title>LED Jas – Ovládanie</title>
 </head>
 <body>
-  <h1>Projekt: Meranie intenzity svetla</h1>
-  <p>Táto stránka zatiaľ len zobrazuje základný HTML súbor. API beží na <code>/light_data</code>.</p>
+  <h1>LED Jas</h1>
+  <label for="slider">Nastav jas (%): <span id="val">0</span>%</label><br>
+  <input type="range" min="0" max="100" value="0" id="slider">
+
+  <script>
+    const slider = document.getElementById("slider");
+    const val = document.getElementById("val");
+
+    slider.oninput = () => {
+      val.innerText = slider.value;
+      fetch("/set_brightness", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "percent=" + slider.value
+      });
+    };
+  </script>
 </body>
 </html>
