@@ -1,25 +1,145 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>LED Jas – Ovládanie</title>
+  <title>LED & Senzor Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial;
+      background: #f6f8fa;
+      color: #333;
+      margin: 10px;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: auto;
+      background: white;
+      padding: 15px;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+
+    #slider {
+      width: 100%;
+    }
+
+    canvas {
+      margin-top: 15px;
+      height: 300px !important;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    button {
+      padding: 8px 16px;
+      margin-right: 10px;
+      font-size: 14px;
+      border: none;
+      border-radius: 6px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    h2 {
+      margin-bottom: 10px;
+    }
+  </style>
 </head>
 <body>
-  <h1>LED Jas</h1>
-  <label for="slider">Nastav jas (%): <span id="val">0</span>%</label><br>
-  <input type="range" min="0" max="100" value="0" id="slider">
+  <div class="container">
+    <div style="margin-bottom: 10px;">
+      <button id="openBtn">Open</button>
+      <button id="startBtn">Start</button>
+    </div>
+
+    <h2>Jas LED: <span id="val">0</span>%</h2>
+    <input type="range" min="0" max="100" value="0" id="slider" disabled>
+
+    <canvas id="lightChart"></canvas>
+  </div>
 
   <script>
-    const slider = document.getElementById("slider");
-    const val = document.getElementById("val");
+    let systemOpen = false;
+    let monitoringActive = false;
+
+    const slider = document.getElementById('slider');
+    const valDisplay = document.getElementById('val');
+
+    document.getElementById('openBtn').onclick = () => {
+      fetch('/toggle_open', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          systemOpen = data.system_open;
+          document.getElementById('openBtn').innerText = systemOpen ? "Close" : "Open";
+          slider.disabled = !systemOpen;
+        });
+    };
+
+    document.getElementById('startBtn').onclick = () => {
+      fetch('/toggle_monitoring', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          monitoringActive = data.monitoring_active;
+          document.getElementById('startBtn').innerText = monitoringActive ? "Stop" : "Start";
+        });
+    };
 
     slider.oninput = () => {
-      val.innerText = slider.value;
-      fetch("/set_brightness", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "percent=" + slider.value
+      valDisplay.innerText = slider.value;
+      fetch('/set_brightness', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'percent=' + slider.value
       });
     };
+
+    const ctx = document.getElementById('lightChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Intenzita svetla',
+          data: [],
+          borderColor: '#007bff',
+          backgroundColor: 'rgba(0,123,255,0.1)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        scales: {
+          x: { display: false },
+          y: {
+            min: 0, max: 1023,
+            title: { display: true, text: 'Svetlo (0–1023)' }
+          }
+        }
+      }
+    });
+
+    setInterval(() => {
+      if (!monitoringActive) return;
+      fetch('/light_data')
+        .then(res => res.json())
+        .then(data => {
+          if (data.length > 50) data = data.slice(-50);
+          chart.data.labels = data.map(d => d[0]);
+          chart.data.datasets[0].data = data.map(d => d[1]);
+          chart.update();
+        });
+    }, 1000);
   </script>
 </body>
 </html>
