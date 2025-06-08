@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Historia merani</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f4f4f4; }
+    .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
+    select, button { padding: 8px; font-size: 14px; margin-right: 10px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { padding: 6px 8px; border: 1px solid #ccc; font-size: 13px; text-align: center; }
+    canvas { margin-top: 20px; height: 300px !important; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Vyber relacie</h2>
+    <form method="get">
+      <select name="file">
+        {% for f in files %}
+        <option value="{{ f }}" {% if selected == f %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
+      </select>
+      <select name="mode">
+        <option value="table" {% if mode == 'table' %}selected{% endif %}>Tabulka</option>
+        <option value="graph" {% if mode == 'graph' %}selected{% endif %}>Graf</option>
+      </select>
+      <button type="submit">Zobraziť</button>
+      {% if selected %}
+      <a href="/download/{{ selected }}" style="text-decoration:none; font-size: 14px;">Stiahnuť CSV</a>
+      {% endif %}
+    </form>
+
+    {% if mode == 'table' and data %}
+    <table>
+      <tr><th>Čas</th><th>Senzor</th><th>Jas</th><th>Open</th><th>Monitoring</th></tr>
+      {% for row in data %}
+      <tr>
+        {% for col in row %}
+        <td>{{ col }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+    {% elif mode == 'graph' and data %}
+    <canvas id="chart"></canvas>
+    <script>
+      const data = {{ data|tojson }};
+      const labels = data.map(r => r[0].split(' ')[1]); // Čas
+      const sensorValues = data.map(r => parseInt(r[1]));
+      const brightnessPercent = data.map(r => Math.round(r[2] / 2.55));
+
+      new Chart(document.getElementById('chart').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Intenzita svetla',
+              data: sensorValues,
+              borderColor: 'blue',
+              backgroundColor: 'rgba(0,0,255,0.1)',
+              fill: true,
+              tension: 0.2,
+              yAxisID: 'y'
+            },
+            {
+              label: 'LED Jas (%)',
+              data: brightnessPercent,
+              borderColor: 'orange',
+              backgroundColor: 'rgba(255,165,0,0.1)',
+              fill: false,
+              tension: 0.2,
+              yAxisID: 'y1'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          stacked: false,
+          scales: {
+            y: {
+              type: 'linear',
+              min: 0,
+              max: 1023,
+              position: 'left',
+              title: { display: true, text: 'Intenzita svetla (0–1023)' }
+            },
+            y1: {
+              type: 'linear',
+              min: 0,
+              max: 100,
+              position: 'right',
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'LED Jas (%)' }
+            }
+          }
+        }
+      });
+    </script>
+    {% endif %}
+  </div>
+</body>
+</html>
