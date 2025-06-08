@@ -5,16 +5,13 @@ import time
 
 app = Flask(__name__)
 
-# Inicializácia sériového portu
 ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
 
-# Globálne premenné
 light_data = []
 system_open = False
 monitoring_active = False
 current_brightness = 0
 
-# Čítanie údajov zo senzora
 def read_from_serial():
     global light_data
     while True:
@@ -24,13 +21,12 @@ def read_from_serial():
                 try:
                     raw = int(line[2:])
                     timestamp = int(time.time())
-                    light_data.append((timestamp, raw))
+                    light_data.append((timestamp, raw, current_brightness))
                     if len(light_data) > 100:
                         light_data = light_data[-100:]
                 except:
                     pass
 
-# Spustenie vlákna na čítanie
 threading.Thread(target=read_from_serial, daemon=True).start()
 
 @app.route('/')
@@ -54,23 +50,22 @@ def light_data_api():
 @app.route('/latest_value')
 def latest_value():
     if not system_open or not monitoring_active:
-        return jsonify({'sensor': 0, 'voltage': 0.0, 'brightness': 0})
+        return jsonify({'sensor': 0, 'voltage': 0.0, 'brightness_percent': 0})
     if light_data:
         last = light_data[-1][1]
         voltage = round((last * 5.0) / 1023, 2)
     else:
         last = 0
         voltage = 0.0
-    return jsonify({'sensor': last, 'voltage': voltage, 'brightness': current_brightness})
+    return jsonify({'sensor': last, 'voltage': voltage, 'brightness_percent': round(current_brightness / 2.55)})
 
 @app.route('/set_brightness', methods=['POST'])
 def set_brightness():
     global current_brightness
     percent = int(request.form['percent'])
-    brightness = int(percent * 2.55)
-    current_brightness = percent
+    current_brightness = int(percent * 2.55)
     if system_open:
-        ser.write(f"{brightness}\n".encode())
+        ser.write(f"{current_brightness}\n".encode())
     return '', 204
 
 @app.route('/toggle_open', methods=['POST'])
@@ -78,12 +73,10 @@ def toggle_open():
     global system_open, light_data
     system_open = not system_open
     if system_open:
-        print("🔓 Systém otvorený")
         light_data = []
         ser.write(b"INIT\n")
         ser.write(b"2\n")
     else:
-        print("🔒 Systém zatvorený")
         ser.write(b"0\n")
     return jsonify({'system_open': system_open})
 
@@ -91,12 +84,7 @@ def toggle_open():
 def toggle_monitoring():
     global monitoring_active
     monitoring_active = not monitoring_active
-    print("📊 Monitorovanie:", "Aktívne" if monitoring_active else "Zastavené")
     return jsonify({'monitoring_active': monitoring_active})
-
-@app.route('/status')
-def get_status():
-    return jsonify({'system_open': system_open, 'monitoring_active': monitoring_active})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

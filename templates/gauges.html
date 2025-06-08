@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ukazovatele</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-gauge@0.3.0/dist/chartjs-gauge.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f4f4f4;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+    }
+    canvas {
+      margin: 20px 0;
+    }
+    button, input[type="range"] {
+      margin: 10px 0;
+      padding: 6px 12px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <button id="openBtn">Open</button>
+    <button id="startBtn">Start</button>
+
+    <p>Jas LED: <span id="val">0</span>%</p>
+    <input type="range" min="0" max="100" value="0" id="slider" disabled>
+
+    <canvas id="sensorGauge" width="250" height="250"></canvas>
+    <canvas id="ledGauge" width="250" height="250"></canvas>
+  </div>
+
+  <script>
+    let systemOpen = false;
+    let monitoringActive = false;
+
+    const slider = document.getElementById('slider');
+    const valDisplay = document.getElementById('val');
+
+    document.getElementById('openBtn').onclick = () => {
+      fetch('/toggle_open', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          systemOpen = data.system_open;
+          document.getElementById('openBtn').innerText = systemOpen ? "Close" : "Open";
+          slider.disabled = !systemOpen;
+        });
+    };
+
+    document.getElementById('startBtn').onclick = () => {
+      fetch('/toggle_monitoring', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          monitoringActive = data.monitoring_active;
+          document.getElementById('startBtn').innerText = monitoringActive ? "Stop" : "Start";
+        });
+    };
+
+    slider.oninput = () => {
+      valDisplay.innerText = slider.value;
+      fetch('/set_brightness', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'percent=' + slider.value
+      });
+    };
+
+    const sensorGauge = new Chart(document.getElementById('sensorGauge').getContext('2d'), {
+      type: 'gauge',
+      data: {
+        datasets: [{
+          value: 0,
+          data: [300, 700, 1023],
+          backgroundColor: ['#f00', '#ff0', '#0f0'],
+        }]
+      },
+      options: {
+        responsive: true,
+        title: { display: true, text: 'Intenzita svetla' },
+        needle: { radiusPercentage: 2, widthPercentage: 3.2, lengthPercentage: 80, color: 'black' },
+        valueLabel: { formatter: Math.round }
+      }
+    });
+
+    const ledGauge = new Chart(document.getElementById('ledGauge').getContext('2d'), {
+      type: 'gauge',
+      data: {
+        datasets: [{
+          value: 0,
+          data: [30, 70, 100],
+          backgroundColor: ['#f00', '#ff0', '#0f0'],
+        }]
+      },
+      options: {
+        responsive: true,
+        title: { display: true, text: 'LED Jas (%)' },
+        needle: { radiusPercentage: 2, widthPercentage: 3.2, lengthPercentage: 80, color: 'black' },
+        valueLabel: { formatter: Math.round }
+      }
+    });
+
+    setInterval(() => {
+      if (!monitoringActive) {
+        sensorGauge.data.datasets[0].value = 0;
+        ledGauge.data.datasets[0].value = 0;
+        sensorGauge.update();
+        ledGauge.update();
+        return;
+      }
+
+      fetch('/latest_value')
+        .then(res => res.json())
+        .then(data => {
+          sensorGauge.data.datasets[0].value = data.sensor;
+          ledGauge.data.datasets[0].value = data.brightness_percent || 0;
+          sensorGauge.update();
+          ledGauge.update();
+        });
+    }, 1000);
+  </script>
+</body>
+</html>
