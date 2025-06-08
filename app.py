@@ -4,11 +4,10 @@ import threading
 import time
 import os
 import csv
+import sqlite3
 from datetime import datetime
 
 app = Flask(__name__)
-
-# Inicializácia sériového portu
 ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
 
 # Globálne premenné
@@ -16,10 +15,18 @@ light_data = []
 system_open = False
 monitoring_active = False
 brightness_percent = 0
-current_filename = None
+current_csv = None
 
-# Vytvorenie priečinka na históriu
+# Inicializuj databázu
 os.makedirs("history", exist_ok=True)
+conn = sqlite3.connect('history/data.db', check_same_thread=False)
+cur = conn.cursor()
+cur.execute('''CREATE TABLE IF NOT EXISTS measurements (
+    timestamp TEXT,
+    sensor INTEGER,
+    brightness INTEGER
+)''')
+conn.commit()
 
 # Čítanie údajov zo senzora
 def read_from_serial():
@@ -30,17 +37,20 @@ def read_from_serial():
             if line.startswith("L:"):
                 try:
                     raw = int(line[2:])
-                    timestamp = int(time.time())
-                    light_data.append((timestamp, raw))
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    light_data.append((int(time.time()), raw))
                     if len(light_data) > 100:
                         light_data = light_data[-100:]
 
-                    # Ukladanie do súboru, ak monitorujeme
-                    if system_open and monitoring_active and current_filename:
-                        with open(current_filename, "a", newline='') as f:
-                            writer = csv.writer(f)
-                            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            writer.writerow([now, raw, int(brightness_percent * 2.55), system_open, monitoring_active])
+                    if monitoring_active:
+                        # Zápis do CSV
+                        if current_csv:
+                            with open(f"history/{current_csv}", "a", newline="") as f:
+                                writer = csv.writer(f)
+                                writer.writerow([timestamp, raw, brightness_percent, system_open, monitoring_active])
+                        # Zápis do DB
+                        cur.execute("INSERT INTO measurements VALUES (?, ?, ?)", (timestamp, raw, brightness_percent))
+                        conn.commit()
                 except:
                     pass
 
@@ -57,24 +67,6 @@ def values():
 @app.route('/gauges')
 def gauges():
     return render_template('gauges.html')
-
-@app.route('/history')
-def history():
-    files = sorted([f for f in os.listdir("history") if f.endswith(".csv")])
-    selected = request.args.get("file")
-    mode = request.args.get("mode", "table")
-
-    data = []
-    if selected:
-        with open(f"history/{selected}", newline='') as f:
-            reader = csv.reader(f)
-            data = list(reader)[1:]
-
-    return render_template("history.html", files=files, selected=selected, data=data, mode=mode)
-
-@app.route('/download/<filename>')
-def download(filename):
-    return send_from_directory("history", filename, as_attachment=True)
 
 @app.route('/light_data')
 def light_data_api():
@@ -110,26 +102,54 @@ def toggle_open():
     if system_open:
         light_data = []
         ser.write(b"INIT\n")
-        ser.write(b"2\n")  # minimálna hodnota
+        ser.write(b"2\n")
     else:
         ser.write(b"0\n")
     return jsonify({'system_open': system_open})
 
 @app.route('/toggle_monitoring', methods=['POST'])
 def toggle_monitoring():
-    global monitoring_active, current_filename
+    global monitoring_active, current_csv
     monitoring_active = not monitoring_active
-
     if monitoring_active:
-        now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        current_filename = f"history/session_{now}.csv"
-        with open(current_filename, "w", newline='') as f:
+        filename = datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + ".csv"
+        current_csv = filename
+        with open(f"history/{filename}", "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["timestamp", "sensor", "brightness", "open", "monitoring"])
+            writer.writerow(["timestamp", "sensor", "brightness", "system_open", "monitoring"])
     else:
-        current_filename = None
-
+        current_csv = None
     return jsonify({'monitoring_active': monitoring_active})
+
+@app.route('/history')
+def history():
+    files = os.listdir("history")
+    files = [f for f in files if f.endswith('.csv')]
+    selected = request.args.get('file')
+    mode = request.args.get('mode', 'table')
+    data = []
+    if selected:
+        with open(f"history/{selected}", newline="") as f:
+            reader = csv.reader(f)
+            next(reader)
+            data = list(reader)
+    return render_template('history.html', files=files, selected=selected, data=data, mode=mode)
+
+@app.route('/dbhistory')
+def db_history():
+    mode = request.args.get('mode', 'table')
+    selected = request.args.get('date')
+    cur.execute("SELECT DISTINCT substr(timestamp, 1, 10) FROM measurements")
+    dates = [r[0] for r in cur.fetchall()]
+    data = []
+    if selected:
+        cur.execute("SELECT * FROM measurements WHERE timestamp LIKE ?", (selected + "%",))
+        data = cur.fetchall()
+    return render_template('dbhistory.html', dates=dates, selected=selected, data=data, mode=mode)
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_from_directory("history", filename, as_attachment=True)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
