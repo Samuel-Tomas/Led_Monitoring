@@ -1,63 +1,75 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Hodnoty senzora a LED</title>
+  <title>Hodnoty zo senzora</title>
   <style>
-    body { font-family: sans-serif; background: #f9f9f9; padding: 20px; }
-    .container { max-width: 700px; margin: auto; background: white; padding: 20px; border-radius: 10px; }
-    h2 { margin-bottom: 10px; }
-    ul { list-style: none; padding: 0; }
-    li { padding: 6px 8px; border-bottom: 1px solid #ddd; font-size: 14px; }
-    input[type=range] { width: 100%; margin-top: 10px; }
-    button { padding: 8px 14px; margin-top: 10px; }
+    body { font-family: sans-serif; padding: 20px; }
+    ul { list-style-type: none; padding: 0; }
+    li { margin-bottom: 5px; }
+    input[type=range] { width: 100%; }
+    button { margin: 5px; padding: 8px 14px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>Hodnoty senzora a LED</h2>
-    <input type="range" min="0" max="100" id="slider" disabled>
-    <p>Jas: <span id="val">0</span>%</p>
-    <ul id="log"></ul>
+  <h2>Výpis hodnôt senzora</h2>
+
+  <label for="slider">Jas LED: <span id="val">0</span>%</label>
+  <input type="range" min="0" max="100" value="0" id="slider" disabled>
+
+  <div>
+    <button id="openBtn">Open</button>
+    <button id="startBtn">Start</button>
   </div>
+
+  <ul id="dataList"></ul>
 
   <script>
     let systemOpen = false;
     let monitoringActive = false;
 
-    function updateLog() {
-      fetch('/latest_value')
+    document.getElementById("openBtn").onclick = () => {
+      fetch("/toggle_open", { method: "POST" })
         .then(res => res.json())
         .then(data => {
-          const time = new Date().toLocaleTimeString();
-          const log = document.getElementById('log');
-          const item = document.createElement('li');
-          item.textContent = `${time} – Senzor: ${data.sensor} | Jas: ${data.brightness}%`;
-          log.prepend(item);
-          if (log.children.length > 100) {
-            log.removeChild(log.lastChild);
-          }
+          systemOpen = data.system_open;
+          document.getElementById("openBtn").innerText = systemOpen ? "Close" : "Open";
+          document.getElementById("slider").disabled = !systemOpen;
         });
-    }
+    };
 
-    setInterval(updateLog, 1000);
+    document.getElementById("startBtn").onclick = () => {
+      fetch("/toggle_monitoring", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+          monitoringActive = data.monitoring_active;
+          document.getElementById("startBtn").innerText = monitoringActive ? "Stop" : "Start";
+        });
+    };
 
-    fetch('/status')
-      .then(res => res.json())
-      .then(data => {
-        systemOpen = data.system_open;
-        document.getElementById('slider').disabled = !systemOpen;
-      });
+    const slider = document.getElementById("slider");
+    const valDisplay = document.getElementById("val");
 
-    const slider = document.getElementById('slider');
-    const valDisplay = document.getElementById('val');
     slider.oninput = () => {
       valDisplay.innerText = slider.value;
-      fetch('/set_brightness', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'percent=' + slider.value
+      fetch("/set_brightness", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "percent=" + slider.value
       });
     };
+
+    setInterval(() => {
+      if (!monitoringActive) return;
+      fetch("/latest_value")
+        .then(res => res.json())
+        .then(data => {
+          const entry = `LED Jas: ${document.getElementById("slider").value}%, Svetlo: ${data.sensor}, Napätie: ${data.voltage}V`;
+          const li = document.createElement("li");
+          li.innerText = entry;
+          document.getElementById("dataList").prepend(li);
+        });
+    }, 1000);
   </script>
 </body>
 </html>
+

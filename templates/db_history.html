@@ -1,107 +1,177 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>DB História meraní</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body { font-family: sans-serif; background: #f3f3f3; padding: 20px; }
-    .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 10px; }
-    select, button { padding: 8px; margin-right: 10px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; font-size: 13px; }
-    canvas { margin-top: 20px; height: 300px !important; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h2>Výber dátumu</h2>
-    <form method="get">
-      <select name="date">
-        {% for d in dates %}
-        <option value="{{ d }}" {% if selected == d %}selected{% endif %}>{{ d }}</option>
-        {% endfor %}
-      </select>
-      <select name="mode">
-        <option value="table" {% if mode == 'table' %}selected{% endif %}>Tabuľka</option>
-        <option value="graph" {% if mode == 'graph' %}selected{% endif %}>Graf</option>
-      </select>
-      <button type="submit">Zobraziť</button>
-    </form>
+from flask import Flask, render_template, request, jsonify, send_from_directory
+import serial
+import threading
+import time
+import os
+import csv
+import sqlite3
+from datetime import datetime
 
-    {% if selected %}
-      {% if mode == 'table' %}
-        <table>
-          <tr><th>Čas</th><th>Intenzita svetla</th><th>LED Jas (%)</th></tr>
-          {% for row in data %}
-          <tr>
-            <td>{{ row[0].split(' ')[1] }}</td>
-            <td>{{ row[1] }}</td>
-            <td>{{ (row[2] / 2.55) | round }}</td>
-          </tr>
-          {% endfor %}
-        </table>
-      {% elif mode == 'graph' %}
-        <canvas id="chart"></canvas>
-        <script>
-          const data = {{ data|tojson }};
-          const labels = data.map(r => r[0].split(' ')[1]);
-          const sensorValues = data.map(r => parseInt(r[1]));
-          const brightnessPercent = data.map(r => Math.round(r[2] / 2.55));
+app = Flask(__name__)
 
-          new Chart(document.getElementById('chart').getContext('2d'), {
-            type: 'line',
-            data: {
-              labels: labels,
-              datasets: [
-                {
-                  label: 'Intenzita svetla',
-                  data: sensorValues,
-                  borderColor: 'green',
-                  backgroundColor: 'rgba(0,255,0,0.1)',
-                  fill: true,
-                  tension: 0.3,
-                  yAxisID: 'y'
-                },
-                {
-                  label: 'LED Jas (%)',
-                  data: brightnessPercent,
-                  borderColor: 'orange',
-                  backgroundColor: 'rgba(255,165,0,0.1)',
-                  fill: false,
-                  tension: 0.3,
-                  yAxisID: 'y1'
-                }
-              ]
-            },
-            options: {
-              responsive: true,
-              interaction: {
-                mode: 'index',
-                intersect: false
-              },
-              stacked: false,
-              scales: {
-                y: {
-                  type: 'linear',
-                  min: 0,
-                  max: 1023,
-                  position: 'left',
-                  title: { display: true, text: 'Intenzita svetla (0–1023)' }
-                },
-                y1: {
-                  type: 'linear',
-                  min: 0,
-                  max: 100,
-                  position: 'right',
-                  grid: { drawOnChartArea: false },
-                  title: { display: true, text: 'LED Jas (%)' }
-                }
-              }
-            }
-          });
-        </script>
-      {% endif %}
-    {% endif %}
-  </div>
-</body>
-</html>
+# Sériová komunikácia
+ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+
+# Premenné
+light_data = []
+system_open = False
+monitoring_active = False
+brightness = 0
+current_log_file = None
+log_folder = 'logs'
+db_file = 'data.db'
+
+if not os.path.exists(log_folder):
+    os.makedirs(log_folder)
+
+# Inicializácia databázy
+def init_db():
+    with sqlite3.connect(db_file) as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS measurements (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT,
+                        sensor INTEGER,
+                        brightness INTEGER,
+                        system_open INTEGER,
+                        monitoring INTEGER
+                    )''')
+        conn.commit()
+
+init_db()
+
+# Cítanie sériových údajov
+def read_from_serial():
+    global light_data
+    while True:
+        if ser.in_waiting:
+            line = ser.readline().decode().strip()
+            if line.startswith("L:"):
+                try:
+                    raw = int(line[2:])
+                    ts = int(time.time())
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    light_data.append((ts, raw))
+                    if len(light_data) > 100:
+                        light_data = light_data[-100:]
+
+                    if monitoring_active:
+                        # Zápis do CSV
+                        if current_log_file:
+                            with open(current_log_file, 'a', newline='') as f:
+                                writer = csv.writer(f)
+                                writer.writerow([timestamp, raw, brightness, system_open, monitoring_active])
+
+                        # Zápis do databázy
+                        with sqlite3.connect(db_file) as conn:
+                            c = conn.cursor()
+                            c.execute('''INSERT INTO measurements (timestamp, sensor, brightness, system_open, monitoring)
+                                         VALUES (?, ?, ?, ?, ?)''',
+                                      (timestamp, raw, brightness, int(system_open), int(monitoring_active)))
+                            conn.commit()
+
+                except Exception as e:
+                    print("Chyba pri spracovaní údajov:", e)
+
+threading.Thread(target=read_from_serial, daemon=True).start()
+
+# --- ROUTES ---
+
+@app.route('/')
+def index(): return render_template('index.html')
+
+@app.route('/values')
+def values(): return render_template('values.html')
+
+@app.route('/gauges')
+def gauges(): return render_template('gauges.html')
+
+@app.route('/history')
+def history():
+    files = sorted(os.listdir(log_folder), reverse=True)
+    selected = request.args.get('file')
+    mode = request.args.get('mode', 'table')
+    data = []
+    if selected and selected in files:
+        with open(os.path.join(log_folder, selected), 'r') as f:
+            reader = list(csv.reader(f))[1:]
+            data = reader
+    return render_template('history.html', files=files, selected=selected, mode=mode, data=data)
+
+@app.route('/db_history')
+def db_history():
+    with sqlite3.connect(db_file) as conn:
+        c = conn.cursor()
+        c.execute('SELECT DISTINCT date(timestamp) FROM measurements')
+        dates = [row[0] for row in c.fetchall()]
+    selected = request.args.get('date')
+    mode = request.args.get('mode', 'table')
+    data = []
+    if selected:
+        with sqlite3.connect(db_file) as conn:
+            c = conn.cursor()
+            c.execute('SELECT timestamp, sensor, brightness FROM measurements WHERE date(timestamp) = ?', (selected,))
+            data = c.fetchall()
+    return render_template('db_history.html', dates=dates, selected=selected, mode=mode, data=data)
+
+@app.route('/download/<filename>')
+def download(filename):
+    return send_from_directory(log_folder, filename, as_attachment=True)
+
+@app.route('/light_data')
+def light_data_api():
+    if not system_open or not monitoring_active:
+        return jsonify([[int(time.time()), 0]])
+    return jsonify(light_data)
+
+@app.route('/latest_value')
+def latest_value():
+    if not system_open or not monitoring_active:
+        return jsonify({'sensor': 0, 'voltage': 0.0})
+    if light_data:
+        last = light_data[-1][1]
+        voltage = round((last * 5.0) / 1023, 2)
+    else:
+        last = 0
+        voltage = 0.0
+    return jsonify({'sensor': last, 'voltage': voltage})
+
+@app.route('/set_brightness', methods=['POST'])
+def set_brightness():
+    global brightness
+    percent = int(request.form['percent'])
+    brightness = int(percent * 2.55)
+    if system_open:
+        ser.write(f"{brightness}\n".encode())
+    return '', 204
+
+@app.route('/toggle_open', methods=['POST'])
+def toggle_open():
+    global system_open, light_data, brightness
+    system_open = not system_open
+    if system_open:
+        light_data = []
+        brightness = 2
+        ser.write(b"INIT\n")
+        ser.write(b"2\n")
+    else:
+        brightness = 0
+        ser.write(b"0\n")
+    return jsonify({'system_open': system_open})
+
+@app.route('/toggle_monitoring', methods=['POST'])
+def toggle_monitoring():
+    global monitoring_active, current_log_file
+    monitoring_active = not monitoring_active
+    if monitoring_active:
+        fname = datetime.now().strftime("session_%Y%m%d_%H%M%S.csv")
+        current_log_file = os.path.join(log_folder, fname)
+        with open(current_log_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "sensor", "brightness", "system_open", "monitoring"])
+    else:
+        current_log_file = None
+    return jsonify({'monitoring_active': monitoring_active})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)

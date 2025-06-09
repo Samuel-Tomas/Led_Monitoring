@@ -24,9 +24,9 @@
       width: 100%;
     }
 
-    canvas {
+    #lightChart {
       margin-top: 15px;
-      height: 300px !important;
+      height: 250px !important;
       border: 1px solid #ccc;
       border-radius: 8px;
       background: #fff;
@@ -94,6 +94,7 @@
 
     slider.oninput = () => {
       valDisplay.innerText = slider.value;
+      if (!systemOpen) return;
       fetch('/set_brightness', {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -111,19 +112,46 @@
           data: [],
           borderColor: '#007bff',
           backgroundColor: 'rgba(0,123,255,0.1)',
+          yAxisID: 'y',
           tension: 0.3,
-          fill: true,
-          pointRadius: 0
+          pointRadius: 0,
+          fill: true
         }]
       },
       options: {
-        responsive: true,
         animation: false,
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              font: { size: 12 }
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const val = ctx.raw;
+                const volts = (val * 5 / 1023).toFixed(2);
+                return `Hodnota: ${val} | Napätie: ${volts} V`;
+              }
+            }
+          }
+        },
         scales: {
           x: { display: false },
           y: {
             min: 0, max: 1023,
-            title: { display: true, text: 'Svetlo (0–1023)' }
+            title: { display: true, text: 'Hodnota (0–1023)' }
+          },
+          y1: {
+            position: 'right',
+            min: 0, max: 5,
+            title: { display: true, text: 'Napätie [V]' },
+            grid: { drawOnChartArea: false },
+            ticks: {
+              callback: value => value.toFixed(1) + ' V'
+            }
           }
         }
       }
@@ -135,7 +163,7 @@
         .then(res => res.json())
         .then(data => {
           if (data.length > 50) data = data.slice(-50);
-          chart.data.labels = data.map(d => d[0]);
+          chart.data.labels = data.map(d => new Date(d[0] * 1000).toLocaleTimeString());
           chart.data.datasets[0].data = data.map(d => d[1]);
           chart.update();
         });
@@ -143,3 +171,4 @@
   </script>
 </body>
 </html>
+
